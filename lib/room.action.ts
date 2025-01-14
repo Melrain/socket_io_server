@@ -16,6 +16,21 @@ export const getRoom = async ({ roomId }: { roomId: string }) => {
   }
 };
 
+export const getAllRooms = async () => {
+  try {
+    await connectToDatabase();
+    const rooms = await Room.find();
+    if (rooms) {
+      return { rooms: rooms, code: 200 };
+    } else {
+      return { code: 400 };
+    }
+  } catch (error) {
+    console.error(error);
+    return { error: error, code: 400 };
+  }
+};
+
 export const getRoomByHost = async ({ host }: { host: string }) => {
   try {
     await connectToDatabase();
