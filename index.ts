@@ -14,6 +14,8 @@ import express from "express";
 import { availableParallelism } from "node:os";
 import cluster from "node:cluster";
 import { createAdapter, setupPrimary } from "@socket.io/cluster-adapter";
+import { createServer } from "node:http";
+import "dotenv/config";
 
 // async function main() {
 //   const app = express();
@@ -38,15 +40,7 @@ import { createAdapter, setupPrimary } from "@socket.io/cluster-adapter";
 //       );
 //     });
 //   });
-//   // Room.watch().on("change", (change) => {
-//   //   console.log(change.fullDocument);
-//   //   io.emit(
-//   //     `${JSON.parse(JSON.stringify(change.fullDocument._id))}`,
-//   //     change.fullDocument
-//   //   );
-//   // });
 
-//   // socket io
 //   io.on("connection", (socket) => {
 //     // database watch
 
@@ -134,27 +128,33 @@ import { createAdapter, setupPrimary } from "@socket.io/cluster-adapter";
 //   }
 // }
 
+// main().catch((err) => console.error(err));
+
 if (cluster.isPrimary) {
   const numCPUs = availableParallelism();
   // create one worker per available core
   for (let i = 0; i < numCPUs; i++) {
     cluster.fork({
-      PORT: 3000 + i,
+      PORT: Number(process.env.PORT) + i,
     });
   }
+
+  // set up the adapter on the primary thread
+  setupPrimary();
+} else {
   const app = express();
   app.use(cors());
-  const server = http.createServer(app);
-
+  const server = createServer(app);
   const io = new Server(server, {
+    connectionStateRecovery: {},
     cors: {
       origin: "http://localhost:3000", // 允许的源
       methods: ["GET", "POST"],
+      credentials: true,
     },
-    connectionStateRecovery: {},
+    // set up the adapter on each worker thread
+    adapter: createAdapter(),
   });
-
-  // room watch
   await connectToDatabase().then(() => {
     Room.watch().on("change", (change) => {
       console.log(change.fullDocument);
@@ -242,17 +242,10 @@ if (cluster.isPrimary) {
       }
     );
   });
+  // each worker will listen on a distinct port
+  const port = process.env.PORT;
 
-  try {
-    server.listen(3100, () => {
-      console.log("Server is running on 3100");
-    });
-  } catch (error) {
-    console.error("Failed to start the server", error);
-  }
-  // set up the adapter on the primary thread
-  setupPrimary();
-} else {
+  server.listen(port, () => {
+    console.log(`server running at http://localhost:${port}`);
+  });
 }
-
-// main().catch((err) => console.error(err));
