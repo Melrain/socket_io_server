@@ -6,8 +6,7 @@ import {
   getRoomByHost,
   updateRoom,
 } from "./lib/room.action.js";
-import Redis from "ioredis";
-import Redlock from "redlock";
+
 import { Server } from "socket.io";
 import cors from "cors";
 
