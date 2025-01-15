@@ -6,10 +6,8 @@ import {
   getRoomByHost,
   updateRoom,
 } from "./lib/room.action.js";
-
 import { Server } from "socket.io";
 import cors from "cors";
-
 import Room from "./database/room.model.js";
 import { connectToDatabase } from "./lib/connectToDatabase.js";
 import express, { Request, Response } from "express";
@@ -19,6 +17,7 @@ import { createAdapter, setupPrimary } from "@socket.io/cluster-adapter";
 import { createServer } from "node:http";
 import "dotenv/config";
 import { socketCode } from "./constants/socketCode.js";
+import console from "node:console";
 
 if (cluster.isPrimary) {
   const numCPUs = availableParallelism();
@@ -59,37 +58,11 @@ if (cluster.isPrimary) {
 
   //socket io
   await connectToDatabase().then(() => {
-    const processedEvents = new Set();
     Room.watch().on("change", (change) => {
-      const eventId = JSON.stringify(change.fullDocument._id); // 事件唯一ID
-      console.log("change", JSON.stringify(change.fullDocument._id));
-      if (processedEvents.has(eventId)) {
-        return; // 如果该事件已经处理过，直接返回
-      }
       if (change) {
         io.emit(socketCode.updateALlRooms, change.fullDocument);
-        processedEvents.add(eventId); // 将事件标记为已处理
-        return;
-      }
-      console.log(change.fullDocument);
-      if (change.operationType === "delete") {
         io.emit(
-          `${JSON.parse(JSON.stringify(change.documentKey._id))}_${
-            socketCode.updateRoom
-          }`,
-          change.documentKey
-        );
-        return;
-      }
-      if (change.operationType === "update") {
-        io.emit(socketCode.getALlRooms, change.fullDocument);
-        return;
-      }
-      if (change.operationType === "insert") {
-        io.emit(
-          `${JSON.parse(JSON.stringify(change.documentKey._id))}_${
-            socketCode.updateRoom
-          }`,
+          socketCode.updateRoom + change.fullDocument._id,
           change.fullDocument
         );
         return;
@@ -101,7 +74,29 @@ if (cluster.isPrimary) {
   io.on("connection", (socket) => {
     // database watch
     console.log("one client connected");
-    // 获取房间
+
+    // 获取单个房间
+    socket.on(socketCode.getRoom, async (data) => {
+      console.log("get room event received");
+      const { roomId } = data;
+      const roomRes = await getRoom({ roomId: roomId });
+      if (roomRes.code !== 200) {
+        socket.emit(socketCode.getRoom, {
+          code: 400,
+          message: "get room failed",
+          data: null,
+        });
+        return;
+      }
+      socket.emit(socketCode.getRoom + roomId, {
+        code: 200,
+        message: "get room success",
+        data: roomRes.data,
+      });
+      return;
+    });
+
+    // 获取所有房间
     socket.on(socketCode.getALlRooms, async () => {
       const rooms = await getAllRooms();
       if (rooms.code === 200) {
