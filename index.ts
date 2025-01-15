@@ -1,10 +1,13 @@
+import { createPlayer } from "./lib/player.action.js";
 import {
   createRoom,
   getAllRooms,
   getRoom,
   getRoomByHost,
+  updateRoom,
 } from "./lib/room.action.js";
-
+import Redis from "ioredis";
+import Redlock from "redlock";
 import { Server } from "socket.io";
 import cors from "cors";
 
@@ -57,7 +60,18 @@ if (cluster.isPrimary) {
 
   //socket io
   await connectToDatabase().then(() => {
+    const processedEvents = new Set();
     Room.watch().on("change", (change) => {
+      const eventId = JSON.stringify(change.fullDocument._id); // 事件唯一ID
+      console.log("change", JSON.stringify(change.fullDocument._id));
+      if (processedEvents.has(eventId)) {
+        return; // 如果该事件已经处理过，直接返回
+      }
+      if (change) {
+        io.emit(socketCode.updateALlRooms, change.fullDocument);
+        processedEvents.add(eventId); // 将事件标记为已处理
+        return;
+      }
       console.log(change.fullDocument);
       if (change.operationType === "delete") {
         io.emit(
@@ -69,12 +83,7 @@ if (cluster.isPrimary) {
         return;
       }
       if (change.operationType === "update") {
-        io.emit(
-          `${JSON.parse(JSON.stringify(change.documentKey._id))}_${
-            socketCode.updateRoom
-          }`,
-          change.fullDocument
-        );
+        io.emit(socketCode.getALlRooms, change.fullDocument);
         return;
       }
       if (change.operationType === "insert") {
@@ -93,39 +102,99 @@ if (cluster.isPrimary) {
   io.on("connection", (socket) => {
     // database watch
     console.log("one client connected");
-    // get all rooms
+    // 获取房间
     socket.on(socketCode.getALlRooms, async () => {
       const rooms = await getAllRooms();
       if (rooms.code === 200) {
-        socket.emit(socketCode.gotAllRooms, JSON.parse(JSON.stringify(rooms)));
+        socket.emit(socketCode.getALlRooms, JSON.parse(JSON.stringify(rooms)));
         return;
-      }
-    });
-    // join room
-    socket.on(socketCode.joinRoom, async ({ roomId, walletAddress }) => {
-      // 加入房间
-      console.log("join room:", roomId, walletAddress);
-
-      const findRoomRes = await getRoom({ roomId: roomId });
-      if (findRoomRes.code !== 200) {
-        console.log("room not found");
-        socket.emit(socketCode.joinRoom, {
+      } else {
+        socket.emit(socketCode.getALlRooms, {
           code: 400,
-          message: "room not found",
+          message: "get all rooms failed",
         });
         return;
       }
-      socket.emit(socketCode.joinRoom, {
-        code: 200,
-        data: JSON.parse(JSON.stringify(findRoomRes)),
-      });
-      return;
     });
 
     socket.on("disconnect", (data) => {
       console.log("user disconnected:", data);
       return;
-      // 离开房间
+    });
+
+    // 加入房间
+    socket.on(socketCode.joinRoom, async (data) => {
+      const { walletAddress, roomId, balance } = data;
+
+      const roomRes = await getRoom({ roomId: roomId });
+      if (roomRes.code !== 200) {
+        socket.emit(socketCode.joinRoom, {
+          code: 400,
+          message: "room not found on create player action",
+        });
+        console.log("room not found on create player action");
+        return;
+      }
+
+      // check if player already in the room
+      if (
+        roomRes.data.players.some(
+          (player: { walletAddress: string }) =>
+            player.walletAddress === walletAddress
+        )
+      ) {
+        socket.emit(socketCode.joinRoom, {
+          code: 400,
+          message: "player already in the room",
+        });
+        console.log("player already in the room");
+        return;
+      }
+
+      // create new player
+      const newPlayerRes = await createPlayer({
+        walletAddress: walletAddress,
+        name: walletAddress,
+        coinBalance: balance,
+        isPlaying: false,
+        currentHands: [],
+        currentRoom: roomId,
+        currentAction: "waiting",
+        currentRole: "observer",
+      });
+
+      if (newPlayerRes.code !== 200) {
+        socket.emit(socketCode.joinRoom, {
+          code: 400,
+          message: "create player failed",
+        });
+        console.log("create player failed");
+        return;
+      }
+
+      //push player's walletAddress into room players
+      const updateData = {
+        players: [...roomRes.data.players, newPlayerRes.data._id],
+      };
+      const updateRoomRes = await updateRoom({
+        roomId: roomId,
+        updateData: updateData,
+      });
+      if (updateRoomRes.code !== 200) {
+        socket.emit(socketCode.joinRoom, {
+          code: 400,
+          message: "add player failed",
+        });
+        console.log("add player failed");
+        return;
+      }
+      socket.emit(socketCode.joinRoom, {
+        code: 200,
+        message: "join room success",
+        data: updateRoomRes.data,
+      });
+      console.log("join room success");
+      return;
     });
 
     // 创建房间

@@ -6,4 +6,5 @@ export const socketCode = {
   gotAllRooms: "gotAllRooms",
   updateALlRooms: "updateAllRooms",
   updateRoom: "updateRoom",
+  createPlayer: "createPlayer",
 };

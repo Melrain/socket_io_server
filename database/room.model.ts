@@ -2,7 +2,7 @@ import { ObjectId, Document } from "mongoose";
 import pkg from "mongoose";
 const { Schema, model, models } = pkg;
 
-interface IRoom extends Document {
+export interface IRoom extends Document {
   isPlaying: boolean;
   name: string;
   host: string;
@@ -11,7 +11,7 @@ interface IRoom extends Document {
   minBuyIn: number;
   maxBuyIn: number;
   deck: string[];
-  players: string[];
+  players: ObjectId[];
 }
 
 const RoomSchema = new Schema<IRoom>(
@@ -24,7 +24,10 @@ const RoomSchema = new Schema<IRoom>(
     minBuyIn: { type: Number, required: true },
     maxBuyIn: { type: Number, required: true },
     deck: { type: [String], required: true },
-    players: { type: [String], required: true },
+    players: [
+      { type: Schema.Types.ObjectId, ref: "Player" },
+      { required: true },
+    ],
   },
   {
     timestamps: true,
